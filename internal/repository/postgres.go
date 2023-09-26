@@ -9,7 +9,7 @@ import (
 
 type postgresRepo struct {
 	db     *bun.DB
-	logger *zerolog.Logger
+	logger zerolog.Logger
 }
 
 func (r *postgresRepo) Bootstrap() {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
@@ -11,6 +12,7 @@ import (
 	"indexstorm/go-api-boilerplate/pkg/db"
 	"indexstorm/go-api-boilerplate/pkg/env"
 	"os"
+	"strconv"
 )
 
 type queryHook struct {
@@ -21,33 +23,46 @@ type queryHook struct {
 
 type application struct {
 	debug    bool
-	logger   *zerolog.Logger
 	database *bun.DB
 	repo     repository.Repository
 	server   api.Server
 }
 
 func main() {
-	app := newApplication()
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.TimestampFieldName = "t"
+	zerolog.LevelFieldName = "l"
+	zerolog.MessageFieldName = "m"
+	zerolog.CallerMarshalFunc = func(_ uintptr, file string, line int) string {
+		short := file
+		for i := len(file) - 1; i > 0; i-- {
+			if file[i] == '/' {
+				short = file[i+1:]
+				break
+			}
+		}
+		file = short
+		return file + ":" + strconv.Itoa(line)
+	}
+
+	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	app := newApplication(logger)
 	defer app.database.Close()
 
 	app.repo.Bootstrap()
+	app.database.AddQueryHook(
+		&queryHook{
+			enabled: app.debug,
+			debug:   env.Bool("APP_BUN_DEBUG"),
+			logger:  logger.With().Str("cat", "sql").Logger(),
+		},
+	)
 	defer app.server.Shutdown()
 	app.server.Start(":1337")
 }
 
-func newApplication() *application {
-	logger := newLogger()
+func newApplication(logger zerolog.Logger) *application {
 	isDebug := env.Bool("APP_DEBUG")
-	dbHook := &queryHook{
-		enabled: isDebug,
-		debug:   env.Bool("APP_BUN_DEBUG"),
-		logger:  zerolog.New(os.Stderr).With().Timestamp().Logger(),
-	}
-	sslMode := "require"
-	if certPath := os.Getenv("POSTGRES_CERT_PATH"); certPath != "" {
-		sslMode = "verify-full"
-	}
 	database, err := db.NewConnection(
 		fmt.Sprintf(
 			"postgresql://%s:%s@%s:%s/%s?sslmode=%s",
@@ -56,7 +71,7 @@ func newApplication() *application {
 			os.Getenv("POSTGRES_HOST"),
 			os.Getenv("POSTGRES_PORT"),
 			os.Getenv("POSTGRES_DB"),
-			sslMode,
+			os.Getenv("POSTGRES_SSL_MODE"),
 		),
 	)
 	if err != nil {
@@ -66,29 +81,18 @@ func newApplication() *application {
 		database.Close()
 		logger.Fatal().Err(err).Msg("db:ping")
 	}
-	database.AddQueryHook(dbHook)
 	repo := repository.NewPostgresRepo(database, logger)
 	server := api.NewServer(
 		isDebug,
 		repo,
-		logger.With().Str("cat", "srv").Logger(),
+		logger,
 	)
 	return &application{
 		debug:    isDebug,
-		logger:   logger,
 		database: database,
 		repo:     repo,
 		server:   server,
 	}
-}
-
-func newLogger() *zerolog.Logger {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	zerolog.TimestampFieldName = "t"
-	zerolog.LevelFieldName = "l"
-	zerolog.MessageFieldName = "m"
-	logger := zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
-	return &logger
 }
 
 func (h *queryHook) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
@@ -100,8 +104,10 @@ func (h *queryHook) AfterQuery(_ context.Context, event *bun.QueryEvent) {
 		return
 	}
 	if !h.debug {
-		switch event.Err {
-		case nil, sql.ErrNoRows, sql.ErrTxDone:
+		switch {
+		case event.Err == nil,
+			errors.Is(event.Err, sql.ErrNoRows),
+			errors.Is(event.Err, sql.ErrTxDone):
 			return
 		}
 	}
@@ -111,5 +117,5 @@ func (h *queryHook) AfterQuery(_ context.Context, event *bun.QueryEvent) {
 	} else {
 		logEvent = h.logger.Info()
 	}
-	logEvent.Str("op", event.Operation()).Str("q", event.Query).Str("cat", "sql").Msg("")
+	logEvent.Str("op", event.Operation()).Str("q", event.Query).Msg("")
 }

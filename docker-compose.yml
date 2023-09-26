@@ -24,6 +24,7 @@ services:
       POSTGRES_PORT: "${POSTGRES_PORT:?}"
       POSTGRES_DB: "${POSTGRES_DB:?}"
       POSTGRES_CERT_PATH: "${POSTGRES_CERT_PATH:?}"
+      POSTGRES_SSL_MODE: "${POSTGRES_SSL_MODE:?}"
     logging:
       driver: json-file
       options:

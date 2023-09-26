@@ -13,6 +13,6 @@ type Repository interface {
 	FetchUserByID(id string, ctx context.Context) (*User, error)
 }
 
-func NewPostgresRepo(db *bun.DB, logger *zerolog.Logger) Repository {
-	return &postgresRepo{db: db, logger: logger}
+func NewPostgresRepo(db *bun.DB, logger zerolog.Logger) Repository {
+	return &postgresRepo{db: db, logger: logger.With().Str("cat", "repo").Caller().Logger()}
 }

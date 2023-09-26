@@ -23,6 +23,7 @@ type server struct {
 }
 
 func NewServer(isDebug bool, repo repository.Repository, logger zerolog.Logger) Server {
+	srvLogger := logger.With().Str("cat", "srv").Logger()
 	app := fiber.New(
 		fiber.Config{
 			Prefork:               !isDebug,
@@ -30,26 +31,54 @@ func NewServer(isDebug bool, repo repository.Repository, logger zerolog.Logger) 
 			JSONDecoder:           json.Unmarshal,
 			IdleTimeout:           time.Second * 30,
 			ProxyHeader:           fiber.HeaderXForwardedFor,
+			BodyLimit:             1 * 1024 * 1024,
 			DisableStartupMessage: true,
 			ErrorHandler: func(ctx *fiber.Ctx, err error) error {
-				code := fiber.StatusInternalServerError
-				var e *fiber.Error
-				if errors.As(err, &e) {
-					code = e.Code
+				var a *apiError
+				if errors.As(err, &a) {
+					srvLogger.Info().
+						Err(err).
+						Int("code", a.Code).
+						Str("uri", string(ctx.Request().RequestURI())).
+						Msg("api_error")
+					return ctx.Status(a.Code).JSON(a)
 				}
-				if code != fiber.StatusNotFound {
-					logger.Err(err).Msg("")
+				var f *fiber.Error
+				if errors.As(err, &f) {
+					srvLogger.Info().
+						Err(err).
+						Int("code", f.Code).
+						Str("uri", string(ctx.Request().RequestURI())).
+						Msg("fiber_error")
+					return ctx.Status(f.Code).JSON(f)
 				}
-				return ctx.Status(code).JSON(fiber.Map{"error": err.Error()})
+				srvLogger.Err(err).
+					Any("err", err).
+					Str("uri", string(ctx.Request().RequestURI())).
+					Msg("internal_error")
+				if isDebug {
+					return ctx.Status(fiber.StatusInternalServerError).JSON(
+						fiber.Map{
+							"message": err.Error(),
+							"error":   err,
+						},
+					)
+				}
+				return ctx.SendStatus(fiber.StatusInternalServerError)
 			},
 		},
 	)
-	app.Use(recover2.New())
-
+	app.Use(
+		recover2.New(
+			recover2.Config{
+				EnableStackTrace: true,
+			},
+		),
+	)
 	return &server{
 		debug:  isDebug,
 		app:    app,
-		logger: logger,
+		logger: srvLogger,
 		repo:   repo,
 	}
 }

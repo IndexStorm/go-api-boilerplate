@@ -19,9 +19,9 @@ func NewConnection(conn string) (*bun.DB, error) {
 	}
 	config.DefaultQueryExecMode = pgx.QueryExecModeExec
 	config.ConnectTimeout = time.Second * 20
-	if certPath := os.Getenv("POSTGRES_CERT_PATH"); certPath != "" {
+	if config.TLSConfig != nil && os.Getenv("POSTGRES_CERT_PATH") != "" {
 		rootCertPool := x509.NewCertPool()
-		pem, err := os.ReadFile(certPath)
+		pem, err := os.ReadFile(os.Getenv("POSTGRES_CERT_PATH"))
 		if err != nil {
 			return nil, err
 		}

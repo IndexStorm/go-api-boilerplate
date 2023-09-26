@@ -21,7 +21,28 @@ func (r *postgresRepo) sanitizeCreateModel(model interface{}) {
 	}
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
-		println(value.Type().Field(i).Name)
+		if k := field.Kind(); k == reflect.Pointer {
+			if k := field.Elem().Kind(); k == reflect.Slice {
+				if field.Elem().Len() == 0 {
+					field.SetZero()
+				}
+			} else if sp, ok := field.Interface().(*string); ok && sp != nil {
+				if *sp == "" {
+					field.SetZero()
+				}
+			}
+		} else if k == reflect.Slice {
+			if field.Len() == 0 {
+				field.SetZero()
+			}
+		}
+	}
+}
+
+func (r *postgresRepo) sanitizeUpdateModel(model interface{}) {
+	value := reflect.Indirect(reflect.ValueOf(model))
+	for i := 0; i < value.NumField(); i++ {
+		field := value.Field(i)
 		if k := field.Kind(); k == reflect.Pointer {
 			if k := field.Elem().Kind(); k == reflect.Slice {
 				if field.Elem().Len() == 0 {
